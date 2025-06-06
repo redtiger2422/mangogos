@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>망고의 빌딩피하기</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin:0; padding:0; background:#ffe37a; height:100%; }
+    body {
+      display:flex; flex-direction:column; align-items:center;
+      justify-content:flex-start; min-height:100vh; font-family: 'Pretendard', 'Segoe UI', Arial, sans-serif;
+    }
+    h1 { margin:20px 0 10px 0; font-size:2.1rem; color:#ec9307; text-shadow:0 3px 16px #0002; }
+    #gameWrap { position:relative; width:360px; height:540px; background:#fff9db; border-radius:18px; box-shadow:0 2px 20px #0002; overflow:hidden; }
+    #canvas { background:transparent; display:block; }
+    #scoreBoard {
+      position:absolute; right:14px; top:10px; font-size:1.13rem; color:#fff; background:rgba(255,174,0,0.92); padding:4px 18px 4px 14px; border-radius:16px; box-shadow:0 0 12px #b97c00aa;
+      font-weight:bold; letter-spacing:1px; z-index:11;
+    }
+    #restartBtn {
+      position:absolute; left:50%; top:60%; transform:translate(-50%,-50%);
+      background:#ffbe3b; color:#fff; border:none; border-radius:10px;
+      padding:13px 33px; font-size:1.2rem; font-weight:bold; cursor:pointer;
+      box-shadow:0 3px 20px #ec930788;
+      display:none; z-index:10;
+    }
+    #mobileBtns {
+      display:none; position:absolute; bottom:18px; left:0; width:100%; z-index:9; justify-content:space-between;
+    }
+    .mbtn {
+      background:#ffe37a; border:2px solid #ffd44b; color:#ec9307; border-radius:14px;
+      padding:15px 28px; font-size:1.3rem; font-weight:bold; box-shadow:0 2px 10px #0002;
+      margin:0 10px; cursor:pointer; user-select:none;
+      transition: background 0.15s;
+    }
+    .mbtn:active { background:#ffd44b; }
+    @media (max-width:400px) {
+      #gameWrap { width:98vw; height:66vw; min-width:240px; min-height:320px;}
+      #canvas { width:100%!important; height:100%!important;}
+    }
+    @media (max-width:600px) {
+      #mobileBtns { display:flex; }
+    }
+  </style>
+</head>
+<body>
+  <h1>망고의 빌딩피하기</h1>
+  <div id="gameWrap">
+    <canvas id="canvas" width="360" height="540"></canvas>
+    <div id="scoreBoard">점수: <span id="score">0</span></div>
+    <button id="restartBtn" onclick="restartGame()">다시 시작</button>
+    <div id="mobileBtns">
+      <button class="mbtn" ontouchstart="moveLeft()" ontouchend="stopMove()">◀️</button>
+      <button class="mbtn" ontouchstart="moveRight()" ontouchend="stopMove()">▶️</button>
+    </div>
+    <audio id="bgm" src="https://cdn.pixabay.com/audio/2022/10/16/audio_124bfc97b6.mp3" loop></audio>
+  </div>
+  <div style="margin-top:18px; color:#db9300; font-size:0.97rem; opacity:0.82;">
+    ← → 또는 좌우 버튼으로 사람을 움직여<br>망고가 던지는 장애물을 피하세요!
+  </div>
+  <script>
+    // === 캔버스/기본 ===
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width, H = canvas.height;
+
+    // === 캐릭터/오브젝트 정의 ===
+    const player = {
+      x: W/2-18, y: H-54, w:36, h:36, speed:5.5, dx:0
+    };
+    const mango = { x: 14, y: 12, w: 54, h: 54 };
+    let objects = [];
+    let gameover = false;
+    let score = 0;
+    let frame = 0;
+    let objectInterval = 45; // 오브젝트 등장 주기(프레임)
+    let objectSpeed = 3.2;
+    let maxSimul = 2;
+    let moveDir = 0; // 모바일
+
+    // 오브젝트 종류(랜덤)
+    const objectTypes = [
+      "apartment", // 고층아파트
+      "store",     // 상가
+      "house",     // 단독주택
+      "car",       // 스포츠카
+      "dirt",      // 흙덩이
+    ];
+
+    // === 오브젝트 그림 ===
+    function drawObject(obj) {
+      ctx.save();
+      if(obj.type==="apartment") { // 고층아파트
+        ctx.fillStyle = "#b2cdfc";
+        ctx.fillRect(obj.x, obj.y, obj.w, obj.h);
+        ctx.fillStyle="#2265c1";
+        ctx.fillRect(obj.x, obj.y, obj.w, 16);
+        // 창문
+        ctx.fillStyle="#fff";
+        for(let i=1;i<obj.h/20-0.5;i++){
+          ctx.fillRect(obj.x+8, obj.y+i*20, obj.w-16, 10);
+        }
+      } else if(obj.type==="store") { // 상가
+        ctx.fillStyle = "#e4c686";
+        ctx.fillRect(obj.x, obj.y, obj.w, obj.h);
+        ctx.fillStyle="#cf2340";
+        ctx.fillRect(obj.x, obj.y, obj.w, 14);
+        ctx.fillStyle="#f5e49c";
+        ctx.fillRect(obj.x+7, obj.y+18, obj.w-14, obj.h-25);
+      } else if(obj.type==="house") { // 단독주택
+        ctx.fillStyle="#ffefa3";
+        ctx.fillRect(obj.x, obj.y+obj.h*0.3, obj.w, obj.h*0.7);
+        ctx.beginPath();
+        ctx.moveTo(obj.x, obj.y+obj.h*0.3);
+        ctx.lineTo(obj.x+obj.w/2, obj.y);
+        ctx.lineTo(obj.x+obj.w, obj.y+obj.h*0.3);
+        ctx.closePath();
+        ctx.fillStyle="#e1992d"; ctx.fill();
+        ctx.fillStyle="#b99255";
+        ctx.fillRect(obj.x+obj.w*0.38, obj.y+obj.h*0.6, obj.w*0.24, obj.h*0.4);
+      } else if(obj.type==="car") { // 스포츠카
+        ctx.fillStyle="#d7273a";
+        ctx.fillRect(obj.x, obj.y+obj.h*0.56, obj.w, obj.h*0.24);
+        ctx.beginPath();
+        ctx.ellipse(obj.x+obj.w*0.21, obj.y+obj.h*0.8, obj.w*0.13, obj.h*0.07, 0,0,Math.PI*2);
+        ctx.ellipse(obj.x+obj.w*0.79, obj.y+obj.h*0.8, obj.w*0.13, obj.h*0.07, 0,0,Math.PI*2);
+        ctx.fillStyle="#353535"; ctx.fill();
+        ctx.fillStyle="#eee";
+        ctx.fillRect(obj.x+obj.w*0.25, obj.y+obj.h*0.62, obj.w*0.5, obj.h*0.13);
+      } else if(obj.type==="dirt") { // 흙덩이
+        ctx.beginPath();
+        ctx.ellipse(obj.x+obj.w/2, obj.y+obj.h/2, obj.w/2, obj.h/2, 0,0,Math.PI*2);
+        ctx.fillStyle="#be7d2a";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(obj.x+obj.w*0.65, obj.y+obj.h*0.45, obj.w*0.13, 0, Math.PI*2);
+        ctx.arc(obj.x+obj.w*0.38, obj.y+obj.h*0.63, obj.w*0.09, 0, Math.PI*2);
+        ctx.fillStyle="#e3c293"; ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // === 망고, 사람 ===
+    function drawMango(x, y, size=54) {
+      ctx.save();
+      ctx.translate(x+size/2, y+size/2);
+      ctx.rotate(-0.12);
+      // 본체
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size*0.46, size*0.34, 0, 0, Math.PI*2);
+      ctx.fillStyle = "#ffe156";
+      ctx.shadowColor = "#ffad08"; ctx.shadowBlur=7;
+      ctx.fill();
+      ctx.shadowBlur=0;
+      // 볼터치
+      ctx.beginPath(); ctx.arc(-size*0.13, size*0.13, size*0.09, 0, Math.PI*2);
+      ctx.fillStyle="#ffcf91"; ctx.fill();
+      ctx.beginPath(); ctx.arc(size*0.16, size*0.12, size*0.07, 0, Math.PI*2);
+      ctx.fillStyle="#ffc875"; ctx.fill();
+      // 잎
+      ctx.save();
+      ctx.rotate(-0.8);
+      ctx.beginPath();
+      ctx.moveTo(-size*0.06, -size*0.23);
+      ctx.quadraticCurveTo(-size*0.12, -size*0.40, size*0.06, -size*0.33);
+      ctx.lineTo(size*0.00, -size*0.15);
+      ctx.fillStyle="#5fc173"; ctx.fill();
+      ctx.restore();
+      // 눈
+      ctx.beginPath();
+      ctx.arc(-size*0.13, size*0.02, size*0.06, 0, Math.PI*2);
+      ctx.arc(size*0.13, size*0.02, size*0.06, 0, Math.PI*2);
+      ctx.fillStyle="#3c2b22"; ctx.fill();
+      // 입
+      ctx.beginPath();
+      ctx.arc(0, size*0.11, size*0.14, 0.10, Math.PI-0.1);
+      ctx.lineWidth=2; ctx.strokeStyle="#a8792b"; ctx.stroke();
+      ctx.restore();
+    }
+    function drawPlayer(x, y, w, h) {
+      ctx.save();
+      ctx.translate(x+w/2, y+h/2);
+      // 몸통
+      ctx.lineWidth=4;
+      ctx.strokeStyle="#222";
+      ctx.beginPath();
+      ctx.moveTo(0, -h*0.2);
+      ctx.lineTo(0, h*0.19); ctx.stroke();
+      // 팔
+      ctx.beginPath();
+      ctx.moveTo(0, -h*0.08); ctx.lineTo(-w*0.21, h*0.08); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -h*0.08); ctx.lineTo(w*0.21, h*0.08); ctx.stroke();
+      // 다리
+      ctx.beginPath();
+      ctx.moveTo(0, h*0.19); ctx.lineTo(-w*0.16, h*0.36); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, h*0.19); ctx.lineTo(w*0.16, h*0.36); ctx.stroke();
+      // 머리
+      ctx.beginPath();
+      ctx.arc(0, -h*0.23, w*0.17, 0, Math.PI*2);
+      ctx.fillStyle="#ffeecb"; ctx.fill();
+      ctx.stroke();
+      // 얼굴
+      ctx.beginPath();
+      ctx.arc(-w*0.06, -h*0.25, w*0.03, 0, Math.PI*2);
+      ctx.arc(w*0.06, -h*0.25, w*0.03, 0, Math.PI*2);
+      ctx.fillStyle="#222"; ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, -h*0.21, w*0.06, Math.PI*0.15, Math.PI*0.85);
+      ctx.strokeStyle="#a98543"; ctx.lineWidth=1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // === 게임 루프 ===
+    function resetGame() {
+      player.x = W/2-player.w/2;
+      objects = [];
+      gameover = false; score = 0; frame = 0;
+      objectInterval = 46; objectSpeed = 3.3; maxSimul=2;
+      document.getElementById('restartBtn').style.display='none';
+      document.getElementById('score').innerText=score;
+    }
+
+    function gameLoop() {
+      if(gameover) return;
+      frame++;
+
+      // 오브젝트 등장(동시 여러개/시간경과에 따라 속도, 빈도, 동시수 증가)
+      if(frame%objectInterval === 0) {
+        let numToAdd = Math.floor(1 + Math.random()*maxSimul);
+        for(let n=0;n<numToAdd;n++) {
+          let t = objectTypes[Math.floor(Math.random()*objectTypes.length)];
+          let objW = 36 + Math.random()*18, objH = 44 + Math.random()*28;
+          let bx = mango.x + mango.w + Math.random()*((W-mango.w-45)-objW);
+          objects.push({
+            x:bx, y:mango.y+mango.h/2, w:objW, h:objH, vy:objectSpeed+Math.random()*1.8, type:t
+          });
+        }
+        // 난이도 스케일업
+        if(objectInterval>18) objectInterval -= 0.25; // 최소 한계
+        if(objectSpeed<8) objectSpeed += 0.018; // 최대 한계
+        if(maxSimul<5 && frame%800===0) maxSimul++; // 15초마다 동시 낙하 수 증가
+      }
+
+      // 이동
+      if(moveDir!==0) {
+        player.x += moveDir*player.speed;
+        if(player.x<0) player.x=0;
+        if(player.x>W-player.w) player.x=W-player.w;
+      }
+
+      // 오브젝트 이동
+      for(let o of objects) {
+        o.y += o.vy;
+      }
+
+      // 충돌 체크
+      for(let o of objects) {
+        if(
+          player.x < o.x+o.w-8 &&
+          player.x+player.w-8 > o.x &&
+          player.y < o.y+o.h &&
+          player.y+player.h > o.y+8
+        ) {
+          // 게임오버
+          gameover = true;
+          document.getElementById('restartBtn').style.display='block';
+          stopBGM();
+          return;
+        }
+      }
+      // 바닥 닿은 오브젝트 제거 + 점수
+      let remain=[];
+      for(let o of objects) {
+        if(o.y< H) remain.push(o);
+        else score++;
+      }
+      objects=remain;
+      document.getElementById('score').innerText=score;
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+    function render() {
+      ctx.clearRect(0,0,W,H);
+      // 망고
+      drawMango(mango.x, mango.y, mango.w);
+      // 플레이어
+      drawPlayer(player.x, player.y, player.w, player.h);
+      // 오브젝트
+      for(let o of objects) drawObject(o);
+    }
+
+    // === 조작 ===
+    document.addEventListener('keydown',e=>{
+      if(gameover) return;
+      if(e.keyCode==37) player.x -= player.speed*1.5;
+      else if(e.keyCode==39) player.x += player.speed*1.5;
+      if(player.x<0) player.x=0;
+      if(player.x>W-player.w) player.x=W-player.w;
+    });
+
+    // 모바일: 좌/우 버튼 이벤트
+    function moveLeft() { moveDir = -1; }
+    function moveRight() { moveDir = 1; }
+    function stopMove() { moveDir = 0; }
+
+    // 모바일 터치 스와이프
+    let touchStartX=null;
+    canvas.addEventListener('touchstart',e=>{
+      touchStartX = e.touches[0].clientX;
+    });
+    canvas.addEventListener('touchmove',e=>{
+      if(gameover) return;
+      let dx = e.touches[0].clientX - touchStartX;
+      player.x += dx*0.13;
+      if(player.x<0) player.x=0;
+      if(player.x>W-player.w) player.x=W-player.w;
+      touchStartX = e.touches[0].clientX;
+    });
+    canvas.addEventListener('touchend',()=>{touchStartX=null;});
+
+    // === 리스타트 ===
+    function restartGame() {
+      resetGame();
+      render();
+      setTimeout(()=>{
+        playBGM();
+        gameLoop();
+      }, 400);
+    }
+
+    // === 배경음악 ===
+    function playBGM() {
+      const bgm = document.getElementById('bgm');
+      bgm.currentTime = 0;
+      bgm.volume = 0.6;
+      bgm.play().catch(()=>{}); // 일부 모바일은 상호작용 후 재생
+    }
+    function stopBGM() {
+      document.getElementById('bgm').pause();
+    }
+
+    // === 시작 ===
+    resetGame();
+    render();
+    setTimeout(()=>{
+      playBGM();
+      gameLoop();
+    }, 900);
+
+    // 모바일 버튼 연결
+    window.moveLeft = moveLeft;
+    window.moveRight = moveRight;
+    window.stopMove = stopMove;
+  </script>
+</body>
+</html>
